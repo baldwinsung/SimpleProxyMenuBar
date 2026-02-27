@@ -7,6 +7,11 @@ SCHEME="SimpleProxyMenuBar"
 PROJECT="SimpleProxyMenuBar.xcodeproj"
 INSTALL_PATH="/Applications/$APP_NAME.app"
 
+echo "🛑 Quitting $APP_NAME if running..."
+osascript -e "quit app \"$APP_NAME\"" 2>/dev/null || true
+
+rm -rf ~/Library/Developer/Xcode/DerivedData/$APP_NAME-*
+
 echo "🔨 Building $APP_NAME..."
 
 # Build with xcodebuild
