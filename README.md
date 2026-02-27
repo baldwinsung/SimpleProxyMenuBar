@@ -42,6 +42,7 @@ open SimpleProxyMenuBar.xcodeproj
 ## Build & Install to /Applications
 
 ```bash
+rm -rf ~/Library/Developer/Xcode/DerivedData/SimpleProxyMenuBar-*
 ./build.sh
 ```
 

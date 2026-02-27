@@ -12,13 +12,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var autoRefreshEnabled = true
 
     // Menu items
-    let ipMenuItem          = NSMenuItem(title: "External IP: Loading...", action: #selector(copyIP), keyEquivalent: "")
-    let proxyStatusMenuItem = NSMenuItem(title: "Proxy: Checking...", action: nil, keyEquivalent: "")
-    let proxyDetailMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    let refreshMenuItem     = NSMenuItem(title: "⟳  Refresh", action: #selector(manualRefresh), keyEquivalent: "r")
+    let ipMenuItem               = NSMenuItem(title: "External IP: Loading...", action: #selector(copyIP), keyEquivalent: "")
+    let proxyStatusMenuItem      = NSMenuItem(title: "Proxy: Checking...", action: nil, keyEquivalent: "")
+    let proxyDetailMenuItem      = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    let refreshMenuItem          = NSMenuItem(title: "⟳  Refresh", action: #selector(manualRefresh), keyEquivalent: "r")
     lazy var autoRefreshMenuItem = NSMenuItem(title: "Auto-refresh: ON", action: #selector(toggleAutoRefresh), keyEquivalent: "")
-    let lastUpdatedMenuItem = NSMenuItem(title: "Last updated: —", action: nil, keyEquivalent: "")
-    lazy var launchAtLoginMenuItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    let lastUpdatedMenuItem      = NSMenuItem(title: "Last updated: —", action: nil, keyEquivalent: "")
+    lazy var launchAtLoginMenuItem   = NSMenuItem(title: "Open at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    lazy var pacEnabledMenuItem      = NSMenuItem(title: "Enable Auto Proxy", action: #selector(togglePAC), keyEquivalent: "")
+    lazy var pacURLMenuItem          = NSMenuItem(title: "Set PAC URL...", action: #selector(setPACURL), keyEquivalent: "")
+    lazy var pacCurrentURLMenuItem   = NSMenuItem(title: "PAC URL: —", action: nil, keyEquivalent: "")
+
+    // UserDefaults keys
+    let kPACURL = "pac_url"
 
     // MARK: - Launch
 
@@ -73,6 +79,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Proxy Configuration submenu
+        menu.addItem(buildProxyConfigMenu())
+
         // Preferences submenu
         let prefsMenu = NSMenu()
         launchAtLoginMenuItem.target = self
@@ -85,7 +94,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Help submenu
         let helpMenu = NSMenu()
-        let githubItem = NSMenuItem(title: "GitHub: baldwinsung/SimpleProxyMenuBar", action: #selector(openGitHub), keyEquivalent: "")
+        let githubItem = NSMenuItem(title: "GitHub: baldwinsung", action: #selector(openGitHub), keyEquivalent: "")
         githubItem.target = self
         helpMenu.addItem(githubItem)
 
@@ -100,6 +109,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    func buildProxyConfigMenu() -> NSMenuItem {
+        let proxyMenu = NSMenu()
+
+        // Enable/disable toggle — reflect current state
+        pacEnabledMenuItem.target = self
+        pacEnabledMenuItem.state = isPACEnabled() ? .on : .off
+        proxyMenu.addItem(pacEnabledMenuItem)
+
+        proxyMenu.addItem(NSMenuItem.separator())
+
+        // Current PAC URL (read-only display)
+        pacCurrentURLMenuItem.isEnabled = false
+        updatePACURLMenuItem()
+        proxyMenu.addItem(pacCurrentURLMenuItem)
+
+        // Set PAC URL
+        pacURLMenuItem.target = self
+        proxyMenu.addItem(pacURLMenuItem)
+
+        let proxyConfigItem = NSMenuItem(title: "Proxy Configuration", action: nil, keyEquivalent: "")
+        proxyConfigItem.submenu = proxyMenu
+        return proxyConfigItem
     }
 
     // MARK: - Refresh
@@ -176,16 +209,122 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         lastUpdatedMenuItem.title = "Last updated: \(formatter.string(from: Date()))"
     }
 
+    // MARK: - PAC Proxy Configuration
+
+    /// Returns true if auto proxy (PAC) is enabled on any network service
+    func isPACEnabled() -> Bool {
+        let services = getNetworkServices()
+        for svc in services {
+            let out = shell("/usr/sbin/networksetup -getautoproxyurl \"\(svc)\"")
+            if out.range(of: "Enabled: Yes", options: .caseInsensitive) != nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    @objc func togglePAC() {
+        let enable = pacEnabledMenuItem.state == .off
+
+        // Require a PAC URL to be set before enabling
+        if enable {
+            let savedURL = UserDefaults.standard.string(forKey: kPACURL) ?? ""
+            if savedURL.isEmpty {
+                showAlert("No PAC URL Set", message: "Please set a PAC URL first using \"Set PAC URL...\"")
+                return
+            }
+            applyPACToAllServices(url: savedURL, enabled: true)
+        } else {
+            applyPACToAllServices(url: nil, enabled: false)
+        }
+
+        pacEnabledMenuItem.state = enable ? .on : .off
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.restartApp() }
+    }
+
+    @objc func setPACURL() {
+        let alert = NSAlert()
+        alert.messageText     = "Set PAC URL"
+        alert.informativeText = "Enter the URL of your proxy auto-config file:"
+        alert.addButton(withTitle: "Save & Enable")
+        alert.addButton(withTitle: "Save Only")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
+        input.placeholderString = "https://example.com/proxy.pac"
+        input.stringValue = UserDefaults.standard.string(forKey: kPACURL) ?? ""
+        alert.accessoryView = input
+
+        // Focus the text field
+        alert.window.initialFirstResponder = input
+
+        let response = alert.runModal()
+
+        let url = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch response {
+        case .alertFirstButtonReturn:  // Save & Enable
+            guard !url.isEmpty else {
+                showAlert("Invalid URL", message: "Please enter a valid PAC URL.")
+                return
+            }
+            UserDefaults.standard.set(url, forKey: kPACURL)
+            updatePACURLMenuItem()
+            applyPACToAllServices(url: url, enabled: true)
+            pacEnabledMenuItem.state = .on
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.restartApp() }
+
+        case .alertSecondButtonReturn: // Save Only
+            guard !url.isEmpty else { return }
+            UserDefaults.standard.set(url, forKey: kPACURL)
+            updatePACURLMenuItem()
+
+        default: // Cancel
+            break
+        }
+    }
+
+    /// Apply (or disable) the PAC URL across all network services
+    func applyPACToAllServices(url: String?, enabled: Bool) {
+        let services = getNetworkServices()
+        for svc in services {
+            if enabled, let url = url {
+                shell("/usr/sbin/networksetup -setautoproxyurl \"\(svc)\" \"\(url)\"")
+                shell("/usr/sbin/networksetup -setautoproxystate \"\(svc)\" on")
+            } else {
+                shell("/usr/sbin/networksetup -setautoproxystate \"\(svc)\" off")
+            }
+        }
+    }
+
+    func getNetworkServices() -> [String] {
+        let output = shell("/usr/sbin/networksetup -listallnetworkservices")
+        return output
+            .components(separatedBy: "\n")
+            .dropFirst()
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("*") }
+    }
+
+    func updatePACURLMenuItem() {
+        let url = UserDefaults.standard.string(forKey: kPACURL) ?? ""
+        if url.isEmpty {
+            pacCurrentURLMenuItem.title = "PAC URL: not set"
+        } else {
+            // Truncate long URLs for display
+            let display = url.count > 50 ? String(url.prefix(47)) + "..." : url
+            pacCurrentURLMenuItem.title = "PAC URL: \(display)"
+            pacCurrentURLMenuItem.toolTip = url
+        }
+    }
+
     // MARK: - Launch at Login
 
     func isLaunchAtLoginEnabled() -> Bool {
         if #available(macOS 13.0, *) {
             return SMAppService.mainApp.status == .enabled
         } else {
-            // Fallback: check Login Items via osascript
-            let result = shell("""
-                osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null
-            """)
+            let result = shell("osascript -e 'tell application \"System Events\" to get the name of every login item' 2>/dev/null")
             return result.contains("SimpleProxyMenuBar")
         }
     }
@@ -201,10 +340,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 launchAtLoginMenuItem.state = enable ? .on : .off
             } catch {
-                showAlert("Launch at Login", message: "Could not update Login Items:\n\(error.localizedDescription)")
+                showAlert("Open at Login", message: "Could not update Login Items:\n\(error.localizedDescription)")
             }
         } else {
-            // Fallback for macOS 12
             let appPath = Bundle.main.bundlePath
             let action  = enable ? "make login item at end with properties {path:\"\(appPath)\", hidden:false}"
                                  : "delete (every login item whose name is \"SimpleProxyMenuBar\")"
@@ -216,12 +354,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Help
 
     @objc func openGitHub() {
-        if let url = URL(string: "https://github.com/baldwinsung/SimpleProxyMenuBar") {
+        if let url = URL(string: "https://github.com/baldwinsung") {
             NSWorkspace.shared.open(url)
         }
     }
 
     // MARK: - Helpers
+
+    func restartApp() {
+        let bundlePath = Bundle.main.bundlePath
+        let task = Process()
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", "sleep 1 && open \"\(bundlePath)\""]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError  = FileHandle.nullDevice
+        try? task.run()
+        // Do NOT call waitUntilExit — detach so it survives after terminate
+        NSApp.terminate(nil)
+    }
 
     @discardableResult
     private func shell(_ command: String) -> String {
