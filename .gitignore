@@ -1,4 +1,10 @@
-# Xcode user data (do NOT ignore .xcodeproj itself — it's committed)
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 *.xcworkspace/contents.xcworkspacedata
@@ -7,20 +13,28 @@ DerivedData/
 *.ipa
 *.dSYM.zip
 *.dSYM
+*.xcscmblueprint
+*.xccheckout
 
 # Build output
 build/
 
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
 # Swift Package Manager
 .build/
 .swiftpm/
+Package.resolved
+
+# Terraform
+.terraform
+.terraform.lock.hcl
+.terragrunt-cache
+*.tfstate
+*.tfstate.*
 
 # Editors
 .vscode/
 *.swp
 *.swo
+
+# Claude Code
+.claude/

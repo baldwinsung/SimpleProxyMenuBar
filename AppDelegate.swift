@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var autoRefreshMenuItem = NSMenuItem(title: "Auto-refresh: ON", action: #selector(toggleAutoRefresh), keyEquivalent: "")
     let lastUpdatedMenuItem      = NSMenuItem(title: "Last updated: —", action: nil, keyEquivalent: "")
     lazy var launchAtLoginMenuItem   = NSMenuItem(title: "Open at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    lazy var proxyServersMenuItem    = NSMenuItem(title: "Proxy Servers", action: nil, keyEquivalent: "")
     lazy var pacEnabledMenuItem      = NSMenuItem(title: "Enable Auto Proxy", action: #selector(togglePAC), keyEquivalent: "")
     lazy var pacURLMenuItem          = NSMenuItem(title: "Set PAC URL...", action: #selector(setPACURL), keyEquivalent: "")
     lazy var pacCurrentURLMenuItem   = NSMenuItem(title: "PAC URL: —", action: nil, keyEquivalent: "")
@@ -61,6 +62,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         proxyDetailMenuItem.isEnabled = false
         proxyDetailMenuItem.indentationLevel = 1
         menu.addItem(proxyDetailMenuItem)
+
+        // Proxy servers (dynamic submenu, rebuilt on each refresh)
+        let placeholderMenu = NSMenu()
+        let loadingItem = NSMenuItem(title: "Loading...", action: nil, keyEquivalent: "")
+        loadingItem.isEnabled = false
+        placeholderMenu.addItem(loadingItem)
+        proxyServersMenuItem.submenu = placeholderMenu
+        menu.addItem(proxyServersMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -204,9 +213,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             proxyDetailMenuItem.isHidden = true
         }
 
+        updateProxyServersMenu(result.proxyServers)
+
         let formatter = DateFormatter()
         formatter.timeStyle = .medium
         lastUpdatedMenuItem.title = "Last updated: \(formatter.string(from: Date()))"
+    }
+
+    func updateProxyServersMenu(_ servers: [ProxyServerInfo]) {
+        let submenu = NSMenu()
+
+        guard !servers.isEmpty else {
+            let item = NSMenuItem(title: "No proxy servers configured", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            submenu.addItem(item)
+            proxyServersMenuItem.title = "Proxy Servers (0 active)"
+            proxyServersMenuItem.submenu = submenu
+            return
+        }
+
+        let enabledCount = servers.filter { $0.isEnabled }.count
+
+        for server in servers {
+            let stateIcon = server.isEnabled ? "🟢" : "⚪"
+
+            // Line 1: type, service, configured host:port (or URL for PAC)
+            let displayHost: String
+            if server.type == "PAC" {
+                let url = server.configuredHost
+                displayHost = url.count > 45 ? String(url.prefix(42)) + "..." : url
+            } else {
+                let portSuffix = server.port.isEmpty ? "" : ":\(server.port)"
+                displayHost = "\(server.configuredHost)\(portSuffix)"
+            }
+
+            let mainItem = NSMenuItem(
+                title: "\(stateIcon) \(server.type) [\(server.networkService)]: \(displayHost)",
+                action: nil, keyEquivalent: ""
+            )
+            mainItem.isEnabled = false
+            submenu.addItem(mainItem)
+
+            // Line 2 (indented): resolved IP and TTL
+            var details: [String] = []
+            if let ip = server.resolvedIP {
+                details.append("IP: \(ip)")
+            }
+            if let ttl = server.ttl {
+                details.append("TTL: \(ttl)s")
+            }
+            if let ping = server.ping {
+                details.append("ping: \(ping)ms")
+            }
+            if !details.isEmpty {
+                let detailItem = NSMenuItem(title: details.joined(separator: "  |  "), action: nil, keyEquivalent: "")
+                detailItem.isEnabled = false
+                detailItem.indentationLevel = 1
+                submenu.addItem(detailItem)
+            }
+
+            submenu.addItem(NSMenuItem.separator())
+        }
+
+        // Remove trailing separator
+        if submenu.items.last?.isSeparatorItem == true {
+            submenu.removeItem(at: submenu.items.count - 1)
+        }
+
+        proxyServersMenuItem.title = "Proxy Servers (\(enabledCount) active)"
+        proxyServersMenuItem.submenu = submenu
     }
 
     // MARK: - PAC Proxy Configuration
